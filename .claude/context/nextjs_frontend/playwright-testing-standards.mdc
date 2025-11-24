@@ -1,0 +1,682 @@
+---
+description: Use when writing e2e tests that validate UI functionality
+alwaysApply: false
+---
+# Playwright E2E Testing Standards
+
+Comprehensive strategy for writing reliable, maintainable Playwright tests that eliminate common pain points and reduce debugging complexity.
+
+## Prerequisites
+
+- Playwright 1.40+ with TypeScript
+- NextJS 15+ application
+- Windows PowerShell for command examples
+- Understanding of Page Object Model patterns
+
+## Core Principle
+
+**ALWAYS develop Playwright tests incrementally using semantic locators, proper Page Object Models, and built-in debugging tools to create reliable, maintainable E2E tests that mirror real user interactions.**
+
+## 🚨 CRITICAL RULE: Test User Behavior Only
+
+### **E2E Tests Must EXCLUSIVELY Test User Behavior - Never Implementation Details**
+
+**This is the most important principle in E2E testing. E2E tests should ONLY verify what users actually do and see, never how the application implements that behavior internally.**
+
+### What E2E Tests Should Test (User Behavior)
+✅ **Test what users can DO:**
+- "User can create a performance record"
+- "User can sign in with valid credentials"
+- "User can filter athletes by club"
+- "User can see validation errors for invalid input"
+- "User can navigate to athlete profile"
+
+✅ **Test what users can SEE:**
+- "User sees welcome message after login"
+- "User sees error message for invalid email"
+- "User sees list of athletes"
+- "User sees 'No results found' when search returns empty"
+
+### What E2E Tests Should NEVER Test (Implementation Details)
+❌ **NEVER test CSS classes, HTML structure, or implementation:**
+```typescript
+// ❌ WRONG - Testing implementation details
+await expect(page.locator('.success-message')).toBeVisible();
+await expect(page.locator('div.athlete-card')).toHaveClass('active');
+await expect(page.locator('[data-testid="loading-spinner"]')).toBeHidden();
+```
+
+❌ **NEVER test API responses directly in E2E tests:**
+```typescript
+// ❌ WRONG - This belongs in API tests, not E2E
+await page.waitForResponse(response => 
+  response.url().includes('/api/athletes') && 
+  response.json().then(data => data.length === 5)
+);
+```
+
+❌ **NEVER test internal state or data structures:**
+```typescript
+// ❌ WRONG - Testing internal React state
+await expect(page.locator('[data-component-state="loading"]')).toBeVisible();
+```
+
+### Correct E2E Test Examples
+
+✅ **Focus on user outcomes:**
+```typescript
+// ✅ CORRECT - Testing user behavior
+test('user can create a performance record', async ({ page }) => {
+  // User navigates to create performance
+  await page.getByRole('link', { name: 'Add Performance' }).click();
+  
+  // User fills in the form
+  await page.getByRole('textbox', { name: 'Time' }).fill('10.50');
+  await page.getByRole('combobox', { name: 'Event' }).selectOption('100m Sprint');
+  await page.getByRole('button', { name: 'Save Performance' }).click();
+  
+  // User sees confirmation of success
+  await expect(page.getByText('Performance saved successfully')).toBeVisible();
+  
+  // User can see the new performance in the list
+  await expect(page.getByText('10.50')).toBeVisible();
+  await expect(page.getByText('100m Sprint')).toBeVisible();
+});
+```
+
+✅ **Test error handling from user perspective:**
+```typescript
+// ✅ CORRECT - Testing user experience of validation
+test('user sees error for invalid performance time', async ({ page }) => {
+  await page.getByRole('textbox', { name: 'Time' }).fill('invalid-time');
+  await page.getByRole('button', { name: 'Save Performance' }).click();
+  
+  // User sees the error message
+  await expect(page.getByText('Please enter a valid time format')).toBeVisible();
+  
+  // User cannot proceed (form is not submitted)
+  await expect(page.getByText('Performance saved successfully')).not.toBeVisible();
+});
+```
+
+### Why This Principle is Critical
+
+1. **Resilience** - Tests survive UI refactoring and styling changes
+2. **Clarity** - Tests document what users actually do
+3. **Maintainability** - Tests don't break when internal implementation changes
+4. **Business Value** - Tests verify actual user workflows, not code artifacts
+5. **Debugging** - When tests fail, they indicate real user impact
+
+### Test Naming Convention
+
+✅ **User-focused test names:**
+- `'user can create athlete profile'`
+- `'user sees validation error for duplicate email'`
+- `'user can filter performances by season'`
+
+❌ **Implementation-focused test names:**
+- `'API returns 201 status'`
+- `'form component renders correctly'`
+- `'validation function is called'`
+
+## Unique Test Data Strategy
+
+### **Always Use Unique Data to Avoid Database Conflicts**
+
+**Generate unique test data for each test run to prevent unique constraint violations and test interference.**
+
+### Primary Recommendation: Timestamp-Based Unique Data
+
+```typescript
+// ✅ Generate unique data for each test
+const uniqueId = Date.now().toString();
+const testEmail = `test-user-${uniqueId}@example.com`;
+const testAthleteName = `Test Athlete ${uniqueId}`;
+const testClubName = `Test Club ${uniqueId}`;
+
+// Use in your tests
+await page.getByRole('textbox', { name: 'Email' }).fill(testEmail);
+await page.getByRole('textbox', { name: 'Athlete Name' }).fill(testAthleteName);
+```
+
+### Advanced Unique Data Generation
+
+```typescript
+// tests/helpers/test-data.ts
+export class TestDataGenerator {
+  static generateUniqueEmail(): string {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(7);
+    return `test-${timestamp}-${random}@example.com`;
+  }
+  
+  static generateUniqueAthleteName(): string {
+    const timestamp = Date.now();
+    return `Test Athlete ${timestamp}`;
+  }
+  
+  static generateUniqueClubName(): string {
+    const timestamp = Date.now();
+    return `Test Club ${timestamp}`;
+  }
+}
+
+// Usage in tests
+import { TestDataGenerator } from '../helpers/test-data';
+
+test('user can create athlete', async ({ page }) => {
+  const athleteName = TestDataGenerator.generateUniqueAthleteName();
+  const email = TestDataGenerator.generateUniqueEmail();
+  
+  await page.getByRole('textbox', { name: 'Name' }).fill(athleteName);
+  await page.getByRole('textbox', { name: 'Email' }).fill(email);
+  // ... rest of test
+});
+```
+
+### Database Cleanup Strategy
+
+```typescript
+// Optional: Clean up test data after each test
+test.afterEach(async ({ page }) => {
+  // Only if your app provides a way to clean up test data
+  // Don't rely on direct database access in E2E tests
+  await page.goto('/admin/cleanup-test-data');
+});
+```
+
+### Why Unique Data Matters
+
+1. **Prevents unique constraint errors** - No duplicate emails, names, etc.
+2. **Enables parallel test execution** - Tests don't interfere with each other
+3. **Reliable test reruns** - Tests can be run multiple times without conflicts
+4. **Easier debugging** - Each test run has distinct data for investigation
+
+## The "One Test at a Time" Development Process
+
+### Primary Recommendation: Incremental Test Development
+
+**Why this approach works**:
+- **Immediate feedback** - Catch issues before they compound
+- **Reduced complexity** - Debug one thing at a time
+- **Better understanding** - Learn your application's behavior patterns
+- **Faster iteration** - Less time spent in debugging sessions
+
+**When to consider alternatives**:
+- Simple tests that are proven patterns (like basic navigation)
+- Tests that are copy-paste variations of working tests
+
+### Step 1: Write ONE Test Skeleton
+```typescript
+// ✅ Start with the simplest possible test
+import { test, expect } from '@playwright/test';
+
+test('user can sign in', async ({ page }) => {
+  // TODO: Will implement step by step
+});
+```
+
+### Step 2: Add Navigation and Verify
+```typescript
+test('user can sign in', async ({ page }) => {
+  await page.goto('/signin');
+  
+  // Verify we're on the right page
+  await expect(page).toHaveURL(/signin/);
+  await expect(page.getByRole('heading', { name: 'Sign In' })).toBeVisible();
+});
+```
+
+### Step 3: Run and Debug This Step ONLY
+```powershell
+# Run just this test with debugging
+npx playwright test --grep "user can sign in" --debug
+
+# Or run with UI mode for visual debugging
+npx playwright test --grep "user can sign in" --ui
+```
+
+### Step 4: Add One More Action
+```typescript
+test('user can sign in', async ({ page }) => {
+  await page.goto('/signin');
+  await expect(page).toHaveURL(/signin/);
+  await expect(page.getByRole('heading', { name: 'Sign In' })).toBeVisible();
+  
+  // Add form filling - ONE step at a time
+  await page.getByLabel('Email').fill('user@example.com');
+  await page.getByLabel('Password').fill('password123');
+});
+```
+
+### Step 5: Test and Debug Again
+**NEVER proceed without testing each addition**
+
+## Semantic Locator Standards
+
+### Primary Recommendation: User-Facing Locators
+
+**Replace fragile CSS selectors with semantic locators that mirror how users interact with elements.**
+
+### Locator Priority Order
+1. **`getByRole()`** - Highest priority for interactive elements
+2. **`getByLabel()`** - For form elements with labels
+3. **`getByText()`** - For unique text content
+4. **`getByTestId()`** - For elements that need stable automation hooks
+5. **`getByPlaceholder()`** - Only for inputs without labels
+6. **CSS/XPath selectors** - Last resort only
+
+### Fixing Current Problem Patterns
+
+❌ **Current Problem Pattern:**
+```typescript
+// From your codebase - brittle and unclear
+await page.locator('.relative span[class*="cursor-pointer"]').click();
+await page.locator('input[type="checkbox"]').check({ force: true });
+```
+
+✅ **Improved Semantic Pattern:**
+```typescript
+// Clear, user-facing, resilient
+await page.getByRole('button', { name: 'Show password' }).click();
+await page.getByRole('checkbox', { name: 'I agree to terms' }).check();
+```
+
+### Comprehensive Locator Examples
+
+```typescript
+// ✅ Sign-in form with semantic locators
+await page.getByRole('textbox', { name: 'Email' }).fill('user@example.com');
+await page.getByRole('textbox', { name: 'Password' }).fill('password123');
+await page.getByRole('button', { name: 'Sign In' }).click();
+
+// ✅ Navigation elements
+await page.getByRole('link', { name: 'Dashboard' }).click();
+await page.getByRole('button', { name: 'Profile' }).click();
+
+// ✅ Form validation
+await expect(
+  page.getByText('Email is required')
+).toBeVisible();
+
+// ✅ Dynamic content
+await expect(
+  page.getByRole('alert').filter({ hasText: 'Successfully saved' })
+).toBeVisible();
+```
+
+## Page Object Model Implementation
+
+### Proper POM for Complex Pre-Conditions
+
+**Address the club selection and authentication issues with proper encapsulation.**
+
+### Authentication Page Object
+```typescript
+// tests/pages/AuthPage.ts
+import { Page, expect } from '@playwright/test';
+
+export class AuthPage {
+  constructor(private page: Page) {}
+
+  async goto() {
+    await this.page.goto('/signin');
+    await expect(this.page).toHaveURL(/signin/);
+  }
+
+  async signIn(email: string, password: string) {
+    await this.page.getByRole('textbox', { name: 'Email' }).fill(email);
+    await this.page.getByRole('textbox', { name: 'Password' }).fill(password);
+    await this.page.getByRole('button', { name: 'Sign In' }).click();
+    
+    // Wait for successful sign-in
+    await expect(this.page).toHaveURL(/admin-dashboard/);
+  }
+
+  async expectValidationError(message: string) {
+    await expect(this.page.getByText(message)).toBeVisible();
+  }
+}
+```
+
+### Club Management Page Object
+```typescript
+// tests/pages/ClubPage.ts
+import { Page, expect } from '@playwright/test';
+
+export class ClubPage {
+  constructor(private page: Page) {}
+
+  async selectClub(clubName: string) {
+    // Open club selector
+    await this.page.getByRole('button', { name: 'Select club' }).click();
+    
+    // Select specific club
+    await this.page.getByRole('option', { name: clubName }).click();
+    
+    // Verify selection
+    await expect(
+      this.page.getByText(`Active: ${clubName}`)
+    ).toBeVisible();
+  }
+
+  async expectClubSelected(clubName: string) {
+    await expect(
+      this.page.getByText(`Active: ${clubName}`)
+    ).toBeVisible();
+  }
+}
+```
+
+### Combined Workflow Page Object
+```typescript
+// tests/pages/AppWorkflow.ts
+import { Page } from '@playwright/test';
+import { AuthPage } from './AuthPage';
+import { ClubPage } from './ClubPage';
+
+export class AppWorkflow {
+  readonly auth: AuthPage;
+  readonly club: ClubPage;
+
+  constructor(private page: Page) {
+    this.auth = new AuthPage(page);
+    this.club = new ClubPage(page);
+  }
+
+  async signInWithClub(email: string, password: string, clubName: string) {
+    await this.auth.goto();
+    await this.auth.signIn(email, password);
+    await this.club.selectClub(clubName);
+  }
+}
+```
+
+### Using Page Objects in Tests
+```typescript
+// tests/club-workflow.spec.ts
+import { test, expect } from '@playwright/test';
+import { AppWorkflow } from './pages/AppWorkflow';
+
+test('user can switch between clubs', async ({ page }) => {
+  const app = new AppWorkflow(page);
+  
+  // Simple, clear test steps
+  await app.signInWithClub('user@example.com', 'password123', 'Metro Runners');
+  await app.club.expectClubSelected('Metro Runners');
+  
+  await app.club.selectClub('Elite Athletics');
+  await app.club.expectClubSelected('Elite Athletics');
+});
+```
+
+## Effective Debugging Workflow
+
+### Built-in Playwright Debugging Tools
+
+**Stop fighting with arbitrary timeouts - use Playwright's powerful debugging features.**
+
+### Debug Mode Commands
+```powershell
+# Step-through debugging with UI
+npx playwright test --debug
+
+# Run specific test in debug mode
+npx playwright test auth-test.spec.ts --debug
+
+# UI mode for interactive development
+npx playwright test --ui
+
+# Generate tests with Codegen
+npx playwright codegen http://localhost:3000
+```
+
+### Tracing and Screenshots
+```typescript
+// playwright.config.ts improvements
+export default defineConfig({
+  use: {
+    // Always take screenshots on failure
+    screenshot: 'only-on-failure',
+    
+    // Record video on failure
+    video: 'retain-on-failure',
+    
+    // Always trace on first retry
+    trace: 'on-first-retry',
+  },
+  
+  // Better timeout settings
+  timeout: 30000,
+  expect: {
+    timeout: 10000,
+  },
+});
+```
+
+### Smart Waiting Strategies
+
+❌ **Current Problem Pattern:**
+```typescript
+// From your codebase - arbitrary timeouts
+await page.waitForTimeout(1000);
+await page.waitForTimeout(2000);
+```
+
+✅ **Improved Waiting Pattern:**
+```typescript
+// Let Playwright handle timing automatically
+await expect(page.getByText('Loading...')).not.toBeVisible();
+await expect(page.getByRole('button', { name: 'Submit' })).toBeEnabled();
+
+// For specific network requests
+await page.waitForResponse(response => 
+  response.url().includes('/api/clubs') && response.status() === 200
+);
+
+// For DOM state changes
+await page.waitForLoadState('networkidle');
+```
+
+## Test Organization Structure
+
+### Recommended File Structure
+```
+tests/
+├── pages/                    # Page Object Models
+│   ├── AuthPage.ts
+│   ├── ClubPage.ts
+│   └── AppWorkflow.ts
+├── fixtures/                 # Test data
+│   └── test-users.ts
+├── specs/                    # Actual tests
+│   ├── auth/
+│   │   ├── signin.spec.ts
+│   │   └── signup.spec.ts
+│   └── club-management/
+│       └── club-switching.spec.ts
+└── helpers/                  # Utility functions
+    └── test-helpers.ts
+```
+
+### Test File Template
+```typescript
+// tests/specs/auth/signin.spec.ts
+import { test, expect } from '@playwright/test';
+import { AuthPage } from '../../pages/AuthPage';
+
+test.describe('User Sign In', () => {
+  let authPage: AuthPage;
+
+  test.beforeEach(async ({ page }) => {
+    authPage = new AuthPage(page);
+    await authPage.goto();
+  });
+
+  test('displays sign in form', async () => {
+    await expect(authPage.page.getByRole('heading', { name: 'Sign In' })).toBeVisible();
+    await expect(authPage.page.getByRole('textbox', { name: 'Email' })).toBeVisible();
+    await expect(authPage.page.getByRole('textbox', { name: 'Password' })).toBeVisible();
+  });
+
+  // Add ONE test at a time!
+});
+```
+
+## Configuration Improvements
+
+### Enhanced Playwright Config
+```typescript
+// playwright.config.ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/specs',
+  
+  // Better timeout settings
+  timeout: 30000,
+  expect: { timeout: 10000 },
+  
+  // Debugging-friendly settings
+  fullyParallel: false, // Easier debugging when disabled
+  workers: process.env.CI ? 1 : 2, // Limit parallelism for stability
+  
+  retries: process.env.CI ? 2 : 0,
+  
+  reporter: [
+    ['html'],
+    ['list'], // Better console output
+  ],
+  
+  use: {
+    baseURL: 'http://localhost:3000',
+    
+    // Better debugging
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    trace: 'on-first-retry',
+    
+    // More reliable settings
+    actionTimeout: 10000,
+    navigationTimeout: 30000,
+  },
+
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    // Add other browsers after core tests are stable
+  ],
+
+  webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:3000',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120 * 1000,
+  },
+});
+```
+
+## Migration Strategy
+
+### Phase 1: Fix One Existing Test
+1. Choose your most important test
+2. Refactor it to use semantic locators
+3. Remove arbitrary timeouts
+4. Test and debug until stable
+
+### Phase 2: Create Page Objects
+1. Extract complex interactions into page objects
+2. Start with authentication flow
+3. Add club management
+4. Test each page object independently
+
+### Phase 3: Expand Incrementally  
+1. Write new tests using the established patterns
+2. One test at a time
+3. Always debug before moving to the next
+
+## Quick Reference Commands
+
+### Development Commands
+```powershell
+# Start with one test in debug mode
+npx playwright test --grep "specific test name" --debug
+
+# Use UI mode for visual development
+npx playwright test --ui
+
+# Generate selectors with Codegen
+npx playwright codegen localhost:3000
+
+# Run tests with trace
+npx playwright test --trace on
+
+# View test results
+npx playwright show-report
+```
+
+### Locator Cheat Sheet
+```typescript
+// Interactive elements
+page.getByRole('button', { name: 'Submit' })
+page.getByRole('link', { name: 'Home' })
+page.getByRole('textbox', { name: 'Email' })
+
+// Form elements
+page.getByLabel('Password')
+page.getByPlaceholder('Enter email')
+
+// Content
+page.getByText('Welcome back')
+page.getByRole('heading', { name: 'Dashboard' })
+
+// Test IDs (when semantic locators aren't enough)
+page.getByTestId('submit-button')
+```
+
+## Success Criteria
+
+- [x] **One test at a time** - Write and debug incrementally
+- [x] **Semantic locators** - Use getByRole, getByLabel, getByText primarily  
+- [x] **Page Object Models** - Encapsulate complex workflows
+- [x] **No arbitrary timeouts** - Let Playwright handle waiting
+- [x] **Built-in debugging** - Use --debug, --ui, and tracing
+- [x] **Clear test organization** - Structured file hierarchy
+
+## Examples
+
+✅ **Recommended Pattern:**
+```typescript
+// Incremental test development with semantic locators
+test('user can sign in and select club', async ({ page }) => {
+  const app = new AppWorkflow(page);
+  
+  await app.auth.goto();
+  await app.auth.signIn('user@example.com', 'password123');
+  await app.club.selectClub('Metro Runners');
+  
+  await expect(page.getByText('Welcome to Metro Runners')).toBeVisible();
+});
+```
+
+❌ **Avoid This Pattern:**
+```typescript
+// Complex test with fragile selectors and timeouts
+test('complete user workflow', async ({ page }) => {
+  await page.goto('/signin');
+  await page.waitForTimeout(2000);
+  await page.locator('.email-input-class-xyz').fill('user@example.com');
+  await page.locator('button.submit-btn-123').click();
+  await page.waitForTimeout(5000);
+  // ... many more steps without debugging each one
+});
+```
+
+---
+
+**Note**: This strategy eliminates the common Playwright pain points by focusing on incremental development, semantic locators, proper page objects, and effective use of debugging tools. Start with one test and build confidence before expanding.
+description: Use when writing e2e tests that validate UI functionality
+alwaysApply: false
+---

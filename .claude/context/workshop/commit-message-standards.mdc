@@ -1,0 +1,219 @@
+---
+description: Conventional Commits v1.0.0 format examples and patterns for commit message validation
+globs: .git/COMMIT_EDITMSG
+alwaysApply: false
+---
+
+# Commit Message Standards
+
+Comprehensive examples and patterns for Conventional Commits v1.0.0 specification compliance.
+
+## Prerequisites
+
+- Git version control system
+- Understanding of semantic versioning
+- Familiarity with imperative mood writing
+
+## Core Principle
+
+**ALWAYS write commit messages in Conventional Commits v1.0.0 format with type, optional scope, clear subject, and breaking change indicators for automated versioning and changelog generation.**
+
+## Format Structure
+
+### Basic Format
+```
+type(scope): subject
+
+body
+
+footer
+```
+
+### Format Rules
+- **type**: Required, lowercase, from allowed list
+- **scope**: Optional, lowercase, describes module/component
+- **subject**: Required, imperative mood, lowercase, no period, max 50 chars
+- **body**: Optional, explains what and why, wrapped at 72 chars
+- **footer**: Optional, contains breaking changes and issue references
+
+## Valid Commit Types
+
+```
+feat     - New feature for the user
+fix      - Bug fix for the user
+docs     - Documentation changes
+style    - Code style changes (formatting, semicolons, etc)
+refactor - Code restructuring without behavior change
+perf     - Performance improvements
+test     - Adding or updating tests
+build    - Build system or dependency changes
+ci       - CI/CD configuration changes
+chore    - Other changes that don't modify src or test files
+revert   - Reverts a previous commit
+```
+
+## Good Examples
+
+### Feature with scope
+```
+feat(auth): add OAuth2 login support
+
+Implement OAuth2 authentication flow using Google provider.
+Users can now sign in with their Google account instead of
+creating a new password.
+
+Closes #123
+```
+
+### Bug fix
+```
+fix(api): prevent race condition in user creation
+
+Add transaction wrapper around user creation and role assignment
+to prevent partial record creation when role assignment fails.
+
+Fixes #456
+```
+
+### Documentation
+```
+docs(readme): update installation instructions
+
+Add section for Windows installation requirements and
+troubleshooting common PATH issues.
+```
+
+### Breaking change with !
+```
+feat(api)!: change user endpoint response format
+
+BREAKING CHANGE: User API now returns ISO 8601 timestamps
+instead of Unix epoch. Update all clients to parse new format.
+
+Migration guide: https://docs.example.com/migration-v2
+
+Closes #789
+```
+
+### Breaking change with footer only
+```
+feat(database): migrate to PostgreSQL 15
+
+Add support for new PostgreSQL 15 features including JSON
+path expressions and improved indexing strategies.
+
+BREAKING CHANGE: Minimum PostgreSQL version is now 15.0.
+Upgrade database before deploying this version.
+```
+
+### Multiple footers
+```
+fix(payment): correct tax calculation for EU customers
+
+Update tax calculation to properly handle VAT rates for
+different EU countries and reverse charge mechanism.
+
+Reviewed-by: Jane Smith
+Refs: #234, #567
+Fixes #890
+```
+
+## Common Anti-Patterns
+
+### Wrong: Capitalized type
+```
+Feat(auth): add login
+```
+**Problem**: Type must be lowercase
+**Solution**: `feat(auth): add login`
+
+### Wrong: Period at end of subject
+```
+feat(auth): add OAuth2 login.
+```
+**Problem**: Subject should not end with period
+**Solution**: `feat(auth): add OAuth2 login`
+
+### Wrong: Subject too long
+```
+feat(auth): add comprehensive OAuth2 authentication with Google, GitHub, and Microsoft providers
+```
+**Problem**: Subject exceeds 50 characters (87 chars)
+**Solution**:
+```
+feat(auth): add OAuth2 authentication
+
+Support Google, GitHub, and Microsoft identity providers
+for user authentication.
+```
+
+### Wrong: Missing space after colon
+```
+feat(auth):add OAuth2 login
+```
+**Problem**: Must have space after colon
+**Solution**: `feat(auth): add OAuth2 login`
+
+### Wrong: Not imperative mood
+```
+feat(auth): added OAuth2 login
+feat(auth): adding OAuth2 login
+feat(auth): adds OAuth2 login
+```
+**Problem**: Should use imperative mood (command form)
+**Solution**: `feat(auth): add OAuth2 login`
+
+### Wrong: Breaking change without description
+```
+feat(api)!: change response format
+```
+**Problem**: ! requires BREAKING CHANGE footer with description
+**Solution**:
+```
+feat(api)!: change response format
+
+BREAKING CHANGE: Response now uses camelCase instead of
+snake_case for all field names. Update client parsers.
+```
+
+### Wrong: Body not wrapped
+```
+feat(auth): add OAuth2 login
+
+Implement OAuth2 authentication flow using Google provider which allows users to sign in with their existing Google account instead of having to create and remember a new password.
+```
+**Problem**: Body line exceeds 72 characters
+**Solution**:
+```
+feat(auth): add OAuth2 login
+
+Implement OAuth2 authentication flow using Google provider
+which allows users to sign in with their existing Google
+account instead of having to create and remember a new
+password.
+```
+
+### Wrong: Invalid type
+```
+feature(auth): add OAuth2 login
+```
+**Problem**: "feature" is not a valid type
+**Solution**: `feat(auth): add OAuth2 login`
+
+### Wrong: Missing blank line before body
+```
+feat(auth): add OAuth2 login
+Implement OAuth2 authentication flow.
+```
+**Problem**: Must have blank line between subject and body
+**Solution**:
+```
+feat(auth): add OAuth2 login
+
+Implement OAuth2 authentication flow.
+```
+
+## Supporting Components
+
+- **Validation Command**: `.claude/commands/workshop/validate-commit-message.md`
+- **Agent Guidance**: `.claude/agents/workshop/commit-message-validator.md`

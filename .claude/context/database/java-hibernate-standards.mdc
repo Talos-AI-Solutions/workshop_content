@@ -1,0 +1,1187 @@
+---
+description: Complete Hibernate 6+ / JPA 3.1+ / Spring Data JPA standards with comprehensive examples for entity mapping, relationships, queries, transactions, and performance optimization
+globs:
+  - "**/*.java"
+  - "**/resources/**/*.properties"
+  - "**/resources/**/*.yml"
+  - "**/resources/db/migration/**"
+  - "**/resources/db/changelog/**"
+alwaysApply: false
+---
+
+# Java Hibernate and Spring Data JPA Standards
+
+Comprehensive guide for Hibernate 6+, JPA 3.1+, and Spring Data JPA implementation covering entity design, relationships, query optimization, transaction management, connection pooling, and migrations.
+
+**For PostgreSQL database concepts, see:** `.claude/context/database/postgresql-standards.mdc`
+
+## Table of Contents
+
+1. [Entity Design](#entity-design)
+2. [Relationship Mapping](#relationship-mapping)
+3. [Repository Patterns](#repository-patterns)
+4. [Query Optimization](#query-optimization)
+5. [Transaction Management](#transaction-management)
+6. [Connection Pooling (HikariCP)](#connection-pooling-hikaricp)
+7. [Migrations (Flyway & Liquibase)](#migrations-flyway--liquibase)
+8. [Performance Best Practices](#performance-best-practices)
+
+---
+
+## Entity Design
+
+### Basic Entity Structure
+
+Every entity must have explicit annotations for clarity and maintainability.
+
+```java
+package com.example.domain;
+
+import jakarta.persistence.*;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.Instant;
+
+/**
+ * User entity representing application users.
+ * Uses Hibernate 6+ with Jakarta Persistence API 3.1+.
+ */
+@Entity
+@Table(
+    name = "users",
+    indexes = {
+        @Index(name = "idx_users_email", columnList = "email"),
+        @Index(name = "idx_users_username", columnList = "username"),
+        @Index(name = "idx_users_created_at", columnList = "created_at")
+    },
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uq_users_email", columnNames = "email"),
+        @UniqueConstraint(name = "uq_users_username", columnNames = "username")
+    }
+)
+@EntityListeners(AuditingEntityListener.class)
+public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id", nullable = false, updatable = false)
+    private Long id;
+
+    @Column(name = "username", nullable = false, unique = true, length = 50)
+    private String username;
+
+    @Column(name = "email", nullable = false, unique = true, length = 255)
+    private String email;
+
+    @Column(name = "password_hash", nullable = false, length = 255)
+    private String passwordHash;  // BCrypt or Argon2 hash
+
+    @Column(name = "first_name", nullable = false, length = 100)
+    private String firstName;
+
+    @Column(name = "last_name", nullable = false, length = 100)
+    private String lastName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private UserStatus status = UserStatus.ACTIVE;
+
+    @Column(name = "is_active", nullable = false)
+    private Boolean isActive = true;
+
+    // Audit fields - automatically managed by Spring Data JPA
+    @CreatedDate
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @LastModifiedDate
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    // Relationships (lazy by default)
+    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY, cascade = {CascadeType.PERSIST, CascadeType.MERGE})
+    private List<Order> orders = new ArrayList<>();
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "user_roles",
+        joinColumns = @JoinColumn(name = "user_id", nullable = false),
+        inverseJoinColumns = @JoinColumn(name = "role_id", nullable = false),
+        indexes = {
+            @Index(name = "idx_user_roles_user_id", columnList = "user_id"),
+            @Index(name = "idx_user_roles_role_id", columnList = "role_id")
+        }
+    )
+    private Set<Role> roles = new HashSet<>();
+
+    // Constructors
+    protected User() {
+        // JPA requires no-arg constructor
+    }
+
+    public User(String username, String email, String firstName, String lastName) {
+        this.username = username;
+        this.email = email;
+        this.firstName = firstName;
+        this.lastName = lastName;
+    }
+
+    // Getters and setters
+    public Long getId() { return id; }
+
+    public String getUsername() { return username; }
+    public void setUsername(String username) { this.username = username; }
+
+    public String getEmail() { return email; }
+    public void setEmail(String email) { this.email = email; }
+
+    public String getPasswordHash() { return passwordHash; }
+    public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
+
+    public String getFirstName() { return firstName; }
+    public void setFirstName(String firstName) { this.firstName = firstName; }
+
+    public String getLastName() { return lastName; }
+    public void setLastName(String lastName) { this.lastName = lastName; }
+
+    public UserStatus getStatus() { return status; }
+    public void setStatus(UserStatus status) { this.status = status; }
+
+    public Boolean getIsActive() { return isActive; }
+    public void setIsActive(Boolean isActive) { this.isActive = isActive; }
+
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
+
+    public List<Order> getOrders() { return orders; }
+    public void setOrders(List<Order> orders) { this.orders = orders; }
+
+    public Set<Role> getRoles() { return roles; }
+    public void setRoles(Set<Role> roles) { this.roles = roles; }
+
+    // Business methods
+    public void addRole(Role role) {
+        this.roles.add(role);
+        role.getUsers().add(this);
+    }
+
+    public void removeRole(Role role) {
+        this.roles.remove(role);
+        role.getUsers().remove(this);
+    }
+
+    // Equals and hashCode based on business key (email)
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof User)) return false;
+        User user = (User) o;
+        return email != null && email.equals(user.email);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
+    }
+
+    @Override
+    public String toString() {
+        return "User{id=" + id + ", username='" + username + "', email='" + email + "'}";
+    }
+}
+
+// Enum for user status
+public enum UserStatus {
+    ACTIVE,
+    INACTIVE,
+    SUSPENDED,
+    PENDING_VERIFICATION
+}
+```
+
+### Key Entity Design Principles
+
+1. **@Entity and @Table**: Always specify both with explicit table name
+2. **@Column**: Explicitly define all columns with name, nullable, length
+3. **@Id and @GeneratedValue**: Use IDENTITY strategy for PostgreSQL
+4. **Audit Fields**: Use Spring Data JPA auditing (@CreatedDate, @LastModifiedDate)
+5. **Enums**: Use @Enumerated(EnumType.STRING) for database portability
+6. **Indexes**: Define indexes in @Table annotation for foreign keys and query columns
+7. **Lazy Loading**: Default fetch type for relationships
+8. **Business Key**: Use equals/hashCode based on business key, not ID
+
+**For schema design principles, see:** `.claude/context/database/postgresql-standards.mdc#schema-design-principles`
+
+---
+
+## Relationship Mapping
+
+### @ManyToOne (Child to Parent)
+
+The owning side of the relationship with foreign key.
+
+**For foreign key concepts, see:** `.claude/context/database/postgresql-standards.mdc#foreign-keys`
+
+```java
+@Entity
+@Table(
+    name = "orders",
+    indexes = {
+        @Index(name = "idx_orders_user_id", columnList = "user_id"),  // CRITICAL for JOIN performance
+        @Index(name = "idx_orders_status", columnList = "status"),
+        @Index(name = "idx_orders_created_at", columnList = "created_at")
+    }
+)
+public class Order {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id", nullable = false)
+    private Long id;
+
+    @Column(name = "order_number", nullable = false, unique = true, length = 50)
+    private String orderNumber;
+
+    // ManyToOne: Many orders belong to one user
+    // ALWAYS specify @JoinColumn with explicit name
+    // ALWAYS add index on foreign key column (see @Table indexes above)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "user_id", nullable = false, foreignKey = @ForeignKey(name = "fk_orders_user_id"))
+    private User user;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private OrderStatus status = OrderStatus.PENDING;
+
+    @Column(name = "total", nullable = false, precision = 10, scale = 2)
+    private BigDecimal total;
+
+    @CreatedDate
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @LastModifiedDate
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    // OneToMany: One order has many items
+    @OneToMany(mappedBy = "order", fetch = FetchType.LAZY, cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<OrderItem> items = new ArrayList<>();
+
+    // Constructors, getters, setters, business methods
+    protected Order() {}
+
+    public Order(String orderNumber, User user) {
+        this.orderNumber = orderNumber;
+        this.user = user;
+        this.total = BigDecimal.ZERO;
+    }
+
+    // Business method: Add item to order
+    public void addItem(OrderItem item) {
+        items.add(item);
+        item.setOrder(this);
+        recalculateTotal();
+    }
+
+    public void removeItem(OrderItem item) {
+        items.remove(item);
+        item.setOrder(null);
+        recalculateTotal();
+    }
+
+    private void recalculateTotal() {
+        this.total = items.stream()
+            .map(OrderItem::getSubtotal)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    // Getters and setters...
+}
+
+public enum OrderStatus {
+    PENDING,
+    PROCESSING,
+    SHIPPED,
+    DELIVERED,
+    CANCELLED
+}
+```
+
+### @OneToMany (Parent to Children)
+
+The inverse side of @ManyToOne relationship.
+
+```java
+// In User entity
+@OneToMany(
+    mappedBy = "user",  // CRITICAL: mappedBy references the field name in Order entity
+    fetch = FetchType.LAZY,  // Default but be explicit
+    cascade = {CascadeType.PERSIST, CascadeType.MERGE},  // Explicit cascade types
+    orphanRemoval = false  // Don't delete orders when user is deleted
+)
+private List<Order> orders = new ArrayList<>();
+```
+
+**Key Points**:
+- Use `mappedBy` to indicate inverse side (no @JoinColumn on this side)
+- Specify explicit cascade types (not CascadeType.ALL unless intentional)
+- Consider orphanRemoval carefully (true = delete children when removed from collection)
+
+### @ManyToMany (Junction Table)
+
+For many-to-many relationships, use explicit @JoinTable.
+
+```java
+// User.java
+@Entity
+@Table(name = "users")
+public class User {
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "user_roles",  // Junction table name
+        joinColumns = @JoinColumn(name = "user_id", nullable = false),
+        inverseJoinColumns = @JoinColumn(name = "role_id", nullable = false),
+        indexes = {
+            @Index(name = "idx_user_roles_user_id", columnList = "user_id"),
+            @Index(name = "idx_user_roles_role_id", columnList = "role_id")
+        }
+    )
+    private Set<Role> roles = new HashSet<>();
+
+    // Business methods for bidirectional sync
+    public void addRole(Role role) {
+        this.roles.add(role);
+        role.getUsers().add(this);
+    }
+
+    public void removeRole(Role role) {
+        this.roles.remove(role);
+        role.getUsers().remove(this);
+    }
+}
+
+// Role.java
+@Entity
+@Table(name = "roles")
+public class Role {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id", nullable = false)
+    private Long id;
+
+    @Column(name = "name", nullable = false, unique = true, length = 50)
+    private String name;
+
+    @Column(name = "description", length = 255)
+    private String description;
+
+    // Inverse side: use mappedBy
+    @ManyToMany(mappedBy = "roles", fetch = FetchType.LAZY)
+    private Set<User> users = new HashSet<>();
+
+    // Constructors, getters, setters
+    protected Role() {}
+
+    public Role(String name, String description) {
+        this.name = name;
+        this.description = description;
+    }
+
+    // Getters and setters...
+}
+```
+
+---
+
+## Repository Patterns
+
+### Basic Repository
+
+Extend JpaRepository for full CRUD operations.
+
+```java
+package com.example.repository;
+
+import com.example.domain.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+
+    // Derived query methods (Spring generates SQL)
+    Optional<User> findByEmail(String email);
+    Optional<User> findByUsername(String username);
+    boolean existsByEmail(String email);
+    boolean existsByUsername(String username);
+    long countByStatus(UserStatus status);
+}
+```
+
+### Repository with Custom Queries
+
+Use @Query for complex queries.
+
+```java
+@Repository
+public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    // Derived query methods
+    List<Order> findByUserId(Long userId);
+    List<Order> findByStatus(OrderStatus status);
+
+    // Custom JPQL query
+    @Query("SELECT o FROM Order o WHERE o.user.id = :userId AND o.status = :status")
+    List<Order> findByUserIdAndStatus(@Param("userId") Long userId, @Param("status") OrderStatus status);
+
+    // JPQL with JOIN FETCH to prevent N+1
+    @Query("SELECT o FROM Order o LEFT JOIN FETCH o.items WHERE o.id = :orderId")
+    Optional<Order> findByIdWithItems(@Param("orderId") Long orderId);
+
+    // JPQL with multiple joins
+    @Query("SELECT o FROM Order o " +
+           "LEFT JOIN FETCH o.items i " +
+           "LEFT JOIN FETCH i.product " +
+           "WHERE o.user.id = :userId")
+    List<Order> findByUserIdWithItemsAndProducts(@Param("userId") Long userId);
+
+    // Native SQL query (for PostgreSQL-specific features)
+    @Query(value = "SELECT * FROM orders WHERE created_at >= NOW() - INTERVAL '30 days' AND status = :status",
+           nativeQuery = true)
+    List<Order> findRecentOrdersByStatus(@Param("status") String status);
+
+    // Modifying query (UPDATE/DELETE)
+    @Modifying
+    @Transactional
+    @Query("UPDATE Order o SET o.status = :newStatus WHERE o.status = :oldStatus")
+    int updateOrderStatus(@Param("oldStatus") OrderStatus oldStatus, @Param("newStatus") OrderStatus newStatus);
+
+    // Pagination
+    Page<Order> findByUserId(Long userId, Pageable pageable);
+}
+```
+
+### Repository with @EntityGraph
+
+Prevent N+1 queries with @EntityGraph.
+
+```java
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+
+    // Ad-hoc entity graph: load orders with user
+    @EntityGraph(attributePaths = {"orders"})
+    Optional<User> findById(Long id);
+
+    // Load multiple relationships
+    @EntityGraph(attributePaths = {"orders", "roles"})
+    List<User> findByStatus(UserStatus status);
+
+    // Nested entity graph: load orders and their items
+    @EntityGraph(attributePaths = {"orders", "orders.items"})
+    Optional<User> findByEmail(String email);
+
+    // Named entity graph (defined in entity)
+    @EntityGraph(value = "User.withOrdersAndRoles", type = EntityGraph.EntityGraphType.LOAD)
+    List<User> findAll();
+}
+
+// Define named entity graph in User entity
+@Entity
+@NamedEntityGraph(
+    name = "User.withOrdersAndRoles",
+    attributeNodes = {
+        @NamedAttributeNode("orders"),
+        @NamedAttributeNode("roles")
+    }
+)
+@NamedEntityGraph(
+    name = "User.withOrdersAndItems",
+    attributeNodes = {
+        @NamedAttributeNode(value = "orders", subgraph = "orders-subgraph")
+    },
+    subgraphs = {
+        @NamedSubgraph(
+            name = "orders-subgraph",
+            attributeNodes = {
+                @NamedAttributeNode("items")
+            }
+        )
+    }
+)
+public class User {
+    // Entity definition...
+}
+```
+
+### Repository with Specifications
+
+Use JPA Criteria API for dynamic queries.
+
+```java
+@Repository
+public interface OrderRepository extends JpaRepository<Order, Long>, JpaSpecificationExecutor<Order> {
+    // Inherits methods: findAll(Specification), findOne(Specification), etc.
+}
+
+// Specifications class
+package com.example.repository.spec;
+
+import com.example.domain.Order;
+import com.example.domain.OrderStatus;
+import org.springframework.data.jpa.domain.Specification;
+
+import java.time.Instant;
+
+public class OrderSpecifications {
+
+    public static Specification<Order> hasStatus(OrderStatus status) {
+        return (root, query, cb) ->
+            status == null ? null : cb.equal(root.get("status"), status);
+    }
+
+    public static Specification<Order> hasUserId(Long userId) {
+        return (root, query, cb) ->
+            userId == null ? null : cb.equal(root.get("user").get("id"), userId);
+    }
+
+    public static Specification<Order> createdAfter(Instant date) {
+        return (root, query, cb) ->
+            date == null ? null : cb.greaterThanOrEqualTo(root.get("createdAt"), date);
+    }
+
+    public static Specification<Order> totalGreaterThan(BigDecimal amount) {
+        return (root, query, cb) ->
+            amount == null ? null : cb.greaterThan(root.get("total"), amount);
+    }
+}
+
+// Service using Specifications
+@Service
+@Transactional(readOnly = true)
+public class OrderService {
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    public List<Order> searchOrders(OrderSearchCriteria criteria) {
+        Specification<Order> spec = Specification.where(null);
+
+        if (criteria.getStatus() != null) {
+            spec = spec.and(OrderSpecifications.hasStatus(criteria.getStatus()));
+        }
+        if (criteria.getUserId() != null) {
+            spec = spec.and(OrderSpecifications.hasUserId(criteria.getUserId()));
+        }
+        if (criteria.getStartDate() != null) {
+            spec = spec.and(OrderSpecifications.createdAfter(criteria.getStartDate()));
+        }
+
+        return orderRepository.findAll(spec);
+    }
+}
+```
+
+---
+
+## Query Optimization
+
+### Preventing N+1 Queries
+
+N+1 is the most common performance issue with Hibernate.
+
+**For query optimization concepts, see:** `.claude/context/database/postgresql-standards.mdc#query-optimization`
+
+```java
+// BAD: N+1 query problem
+@Service
+@Transactional(readOnly = true)
+public class OrderService {
+
+    public void processOrders() {
+        List<Order> orders = orderRepository.findAll();  // 1 query
+
+        for (Order order : orders) {
+            // Each iteration triggers a separate query for items!
+            List<OrderItem> items = order.getItems();  // N queries
+            // Process items...
+        }
+        // Total: 1 + N queries
+    }
+}
+
+// GOOD: Use @EntityGraph to prevent N+1
+@Repository
+public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    @EntityGraph(attributePaths = {"items"})
+    List<Order> findAll();
+
+    @EntityGraph(attributePaths = {"items", "items.product"})
+    List<Order> findAllWithItemsAndProducts();
+}
+
+@Service
+@Transactional(readOnly = true)
+public class OrderService {
+
+    public void processOrders() {
+        List<Order> orders = orderRepository.findAll();  // 1 query with JOIN FETCH
+
+        for (Order order : orders) {
+            List<OrderItem> items = order.getItems();  // No additional query!
+            // Process items...
+        }
+        // Total: 1 query
+    }
+}
+
+// GOOD: Use JOIN FETCH in JPQL
+@Repository
+public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN FETCH o.items WHERE o.status = :status")
+    List<Order> findByStatusWithItems(@Param("status") OrderStatus status);
+
+    // Multiple joins
+    @Query("SELECT DISTINCT o FROM Order o " +
+           "LEFT JOIN FETCH o.items i " +
+           "LEFT JOIN FETCH i.product " +
+           "WHERE o.user.id = :userId")
+    List<Order> findByUserIdWithFullDetails(@Param("userId") Long userId);
+}
+```
+
+### Pagination for Large Result Sets
+
+```java
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+
+    // Pagination
+    Page<User> findByStatus(UserStatus status, Pageable pageable);
+
+    // Pagination with @EntityGraph
+    @EntityGraph(attributePaths = {"roles"})
+    Page<User> findAll(Pageable pageable);
+
+    // Pagination with custom query
+    @Query("SELECT u FROM User u WHERE u.status = :status")
+    Page<User> findByStatusCustom(@Param("status") UserStatus status, Pageable pageable);
+}
+
+@Service
+@Transactional(readOnly = true)
+public class UserService {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    public Page<User> getUsers(int page, int size, String sortBy) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(sortBy).descending());
+        return userRepository.findAll(pageable);
+    }
+
+    public Page<User> searchUsers(String keyword, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size);
+        return userRepository.findByUsernameContainingOrEmailContaining(keyword, keyword, pageable);
+    }
+}
+```
+
+### Batch Operations
+
+```java
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+
+    @Modifying
+    @Transactional
+    @Query("UPDATE User u SET u.status = :status WHERE u.id IN :ids")
+    int updateStatusBatch(@Param("ids") List<Long> ids, @Param("status") UserStatus status);
+}
+
+@Service
+public class UserService {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private EntityManager entityManager;
+
+    @Transactional
+    public void bulkInsert(List<User> users) {
+        int batchSize = 50;
+        for (int i = 0; i < users.size(); i++) {
+            userRepository.save(users.get(i));
+
+            // Flush and clear every batch to prevent memory issues
+            if (i % batchSize == 0 && i > 0) {
+                entityManager.flush();
+                entityManager.clear();
+            }
+        }
+    }
+}
+
+// Configure batch size in application.properties
+// spring.jpa.properties.hibernate.jdbc.batch_size=50
+// spring.jpa.properties.hibernate.order_inserts=true
+// spring.jpa.properties.hibernate.order_updates=true
+```
+
+---
+
+## Transaction Management
+
+### Service Layer Transactions
+
+**CRITICAL**: @Transactional should be on SERVICE layer, not repository or controller.
+
+**For transaction concepts, see:** `.claude/context/database/postgresql-standards.mdc#transaction-management`
+
+```java
+@Service
+public class OrderService {
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private InventoryService inventoryService;
+
+    // Read-only transaction (optimization)
+    @Transactional(readOnly = true)
+    public Order getOrderById(Long orderId) {
+        return orderRepository.findById(orderId)
+            .orElseThrow(() -> new OrderNotFoundException(orderId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<Order> getUserOrders(Long userId) {
+        return orderRepository.findByUserId(userId);
+    }
+
+    // Write transaction (default propagation = REQUIRED)
+    @Transactional
+    public Order createOrder(Long userId, List<OrderItemRequest> itemRequests) {
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new UserNotFoundException(userId));
+
+        Order order = new Order(generateOrderNumber(), user);
+
+        for (OrderItemRequest itemRequest : itemRequests) {
+            // This might throw exception, rolling back entire transaction
+            inventoryService.reserveInventory(itemRequest.getProductId(), itemRequest.getQuantity());
+
+            OrderItem item = new OrderItem(itemRequest.getProductId(), itemRequest.getQuantity(), itemRequest.getPrice());
+            order.addItem(item);
+        }
+
+        return orderRepository.save(order);
+        // Transaction commits here if no exception
+    }
+
+    // New transaction (independent of caller's transaction)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logOrderEvent(Long orderId, String event) {
+        // This transaction commits independently
+        // Even if caller's transaction rolls back, this will commit
+        OrderEvent log = new OrderEvent(orderId, event);
+        orderEventRepository.save(log);
+    }
+
+    // Custom isolation level for critical operations
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    public void processPayment(Long orderId, PaymentDetails payment) {
+        // Highest isolation level to prevent concurrent modifications
+        Order order = orderRepository.findById(orderId)
+            .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw new IllegalStateException("Order already processed");
+        }
+
+        // Process payment...
+        order.setStatus(OrderStatus.PROCESSING);
+        orderRepository.save(order);
+    }
+
+    // Timeout for long-running transactions
+    @Transactional(timeout = 30)  // 30 seconds
+    public void generateMonthlyReports() {
+        // Long-running operation with timeout
+    }
+}
+```
+
+### Transaction Propagation
+
+```java
+@Service
+public class TransactionalService {
+
+    // REQUIRED (default): Join existing transaction or create new one
+    @Transactional(propagation = Propagation.REQUIRED)
+    public void required() { }
+
+    // REQUIRES_NEW: Always create new transaction, suspend existing
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void requiresNew() { }
+
+    // NESTED: Execute within nested transaction if existing, otherwise like REQUIRED
+    @Transactional(propagation = Propagation.NESTED)
+    public void nested() { }
+
+    // SUPPORTS: Join existing transaction, execute non-transactionally if none
+    @Transactional(propagation = Propagation.SUPPORTS)
+    public void supports() { }
+
+    // MANDATORY: Must have existing transaction, throw exception if none
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void mandatory() { }
+}
+```
+
+---
+
+## Connection Pooling (HikariCP)
+
+HikariCP is the default and best-performing connection pool for Spring Boot.
+
+### HikariCP Configuration
+
+```properties
+# application.properties
+
+# Database connection
+spring.datasource.url=jdbc:postgresql://localhost:5432/mydb
+spring.datasource.username=app_user
+spring.datasource.password=secure_password
+
+# HikariCP connection pool settings
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.minimum-idle=5
+spring.datasource.hikari.connection-timeout=30000
+spring.datasource.hikari.idle-timeout=600000
+spring.datasource.hikari.max-lifetime=1800000
+spring.datasource.hikari.keepalive-time=300000
+spring.datasource.hikari.leak-detection-threshold=60000
+
+# Pool name for monitoring
+spring.datasource.hikari.pool-name=MyAppHikariPool
+
+# Connection test query (optional, HikariCP uses JDBC4 isValid by default)
+# spring.datasource.hikari.connection-test-query=SELECT 1
+```
+
+### HikariCP Java Configuration
+
+```java
+@Configuration
+public class DataSourceConfig {
+
+    @Bean
+    @ConfigurationProperties("spring.datasource.hikari")
+    public HikariConfig hikariConfig() {
+        HikariConfig config = new HikariConfig();
+
+        // Connection settings
+        config.setJdbcUrl(environment.getProperty("spring.datasource.url"));
+        config.setUsername(environment.getProperty("spring.datasource.username"));
+        config.setPassword(environment.getProperty("spring.datasource.password"));
+        config.setDriverClassName("org.postgresql.Driver");
+
+        // Pool sizing
+        config.setMaximumPoolSize(10);
+        config.setMinimumIdle(5);
+
+        // Timeouts
+        config.setConnectionTimeout(30000);  // 30 seconds
+        config.setIdleTimeout(600000);       // 10 minutes
+        config.setMaxLifetime(1800000);      // 30 minutes
+        config.setKeepaliveTime(300000);     // 5 minutes
+
+        // Leak detection (debugging)
+        config.setLeakDetectionThreshold(60000);  // 1 minute
+
+        // Pool name
+        config.setPoolName("MyAppHikariPool");
+
+        // PostgreSQL-specific optimizations
+        config.addDataSourceProperty("cachePrepStmts", "true");
+        config.addDataSourceProperty("prepStmtCacheSize", "250");
+        config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048");
+
+        return config;
+    }
+
+    @Bean
+    public DataSource dataSource(HikariConfig hikariConfig) {
+        return new HikariDataSource(hikariConfig);
+    }
+}
+```
+
+### Pool Size Guidelines
+
+```
+Optimal pool size = (Core count × 2) + Effective spindle count
+
+For typical web application:
+- Cores: 4
+- Spindle (disk): 1 (SSD counts as 1)
+- Optimal size: (4 × 2) + 1 = 9-10
+
+Recommendations:
+- Small app (< 100 concurrent users): maximum-pool-size = 10, minimum-idle = 5
+- Medium app (100-1000 users): maximum-pool-size = 20, minimum-idle = 10
+- Large app (> 1000 users): maximum-pool-size = 50, minimum-idle = 25
+
+NEVER:
+- Set pool size too high (> 50 for typical apps)
+- Use minimum-idle = maximum-pool-size (defeats purpose of pooling)
+```
+
+---
+
+## Migrations (Flyway & Liquibase)
+
+### Flyway Configuration
+
+```properties
+# application.properties
+
+# Flyway configuration
+spring.flyway.enabled=true
+spring.flyway.locations=classpath:db/migration
+spring.flyway.baseline-on-migrate=true
+spring.flyway.validate-on-migrate=true
+spring.flyway.out-of-order=false
+
+# Separate migration user with elevated privileges
+spring.flyway.user=migration_user
+spring.flyway.password=migration_password
+
+# Hibernate should validate, not update
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+### Flyway Migration Example
+
+```sql
+-- V1__create_users_table.sql
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    username VARCHAR(50) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_users_username UNIQUE (username),
+    CONSTRAINT uq_users_email UNIQUE (email)
+);
+
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_users_created_at ON users(created_at);
+
+-- V2__create_orders_table.sql
+CREATE TABLE orders (
+    id BIGSERIAL PRIMARY KEY,
+    order_number VARCHAR(50) NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    total NUMERIC(10, 2) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_orders_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT,
+    CONSTRAINT chk_orders_total CHECK (total >= 0)
+);
+
+CREATE INDEX idx_orders_user_id ON orders(user_id);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_created_at ON orders(created_at);
+```
+
+### Liquibase Configuration
+
+```properties
+# application.properties
+
+# Liquibase configuration
+spring.liquibase.enabled=true
+spring.liquibase.change-log=classpath:db/changelog/db.changelog-master.xml
+spring.liquibase.drop-first=false
+
+# Separate migration user
+spring.liquibase.user=migration_user
+spring.liquibase.password=migration_password
+
+# Hibernate should validate, not update
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+### Liquibase Changelog Example
+
+```xml
+<!-- db/changelog/db.changelog-master.xml -->
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+    http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.0.xsd">
+
+    <include file="db/changelog/v1.0/001-create-users-table.xml"/>
+    <include file="db/changelog/v1.0/002-create-orders-table.xml"/>
+</databaseChangeLog>
+```
+
+---
+
+## Performance Best Practices
+
+### Enable Hibernate Statistics (Development Only)
+
+```properties
+# application-dev.properties
+
+# Hibernate statistics
+spring.jpa.properties.hibernate.generate_statistics=true
+logging.level.org.hibernate.stat=DEBUG
+
+# SQL logging
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.format_sql=true
+logging.level.org.hibernate.SQL=DEBUG
+logging.level.org.hibernate.type.descriptor.sql.BasicBinder=TRACE
+
+# Query plan cache
+spring.jpa.properties.hibernate.query.plan_cache_max_size=2048
+spring.jpa.properties.hibernate.query.plan_parameter_metadata_max_size=128
+```
+
+### Anti-Patterns to Avoid
+
+```java
+// BAD: Multiple EAGER fetches (cartesian product)
+@Entity
+public class User {
+    @OneToMany(fetch = FetchType.EAGER)
+    private List<Order> orders;
+
+    @ManyToMany(fetch = FetchType.EAGER)
+    private Set<Role> roles;
+    // Loading 1 user could load orders × roles rows!
+}
+
+// BAD: CascadeType.ALL without understanding
+@ManyToOne(cascade = CascadeType.ALL)
+private User user;
+// Deleting an order could delete the user!
+
+// BAD: Missing @JoinColumn
+@ManyToOne
+private User user;
+// Uses default column name, unclear
+
+// BAD: No index on foreign key
+@ManyToOne
+@JoinColumn(name = "user_id")
+private User user;
+// No @Index in @Table, slow JOINs!
+
+// BAD: SELECT * in loop
+for (Long userId : userIds) {
+    User user = userRepository.findById(userId).orElse(null);
+    // N queries instead of 1
+}
+// Use: userRepository.findAllById(userIds)
+```
+
+### Application Configuration
+
+```java
+@SpringBootApplication
+@EnableJpaAuditing(auditorAwareRef = "auditorProvider")
+@EnableTransactionManagement
+public class Application {
+
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+
+    @Bean
+    public AuditorAware<String> auditorProvider() {
+        return () -> {
+            Authentication authentication = SecurityContextHolder
+                .getContext()
+                .getAuthentication();
+
+            if (authentication == null || !authentication.isAuthenticated()) {
+                return Optional.of("SYSTEM");
+            }
+
+            return Optional.of(authentication.getName());
+        };
+    }
+}
+```
+
+### application.properties
+
+```properties
+# Database
+spring.datasource.url=${DB_URL:jdbc:postgresql://localhost:5432/mydb}
+spring.datasource.username=${DB_USERNAME:app_user}
+spring.datasource.password=${DB_PASSWORD}
+
+# JPA/Hibernate
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+spring.jpa.properties.hibernate.jdbc.batch_size=50
+spring.jpa.properties.hibernate.order_inserts=true
+spring.jpa.properties.hibernate.order_updates=true
+spring.jpa.properties.hibernate.jdbc.lob.non_contextual_creation=true
+
+# HikariCP
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.minimum-idle=5
+spring.datasource.hikari.connection-timeout=30000
+spring.datasource.hikari.keepalive-time=300000
+spring.datasource.hikari.leak-detection-threshold=60000
+
+# Flyway
+spring.flyway.enabled=true
+spring.flyway.locations=classpath:db/migration
+spring.flyway.baseline-on-migrate=true
+spring.flyway.validate-on-migrate=true
+```
+
+---
+
+## Supporting Components
+
+This context file supports:
+- **Agent**: `.claude/agents/database/java-database-administrator.md`
+- **Commands**: `.claude/commands/database/validate-*.md`
+- **PostgreSQL Standards**: `.claude/context/database/postgresql-standards.mdc`
+
+This comprehensive guide provides production-ready patterns for Java database development with Hibernate 6+, JPA 3.1+, and Spring Data JPA.

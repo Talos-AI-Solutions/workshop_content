@@ -1,0 +1,1 @@
+Using the data base schema and the mockup screenshots and using your knowledge or REST APIs - design the OpenAI spec that will facilitate these screens being fed by the schema

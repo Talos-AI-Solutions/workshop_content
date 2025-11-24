@@ -1,0 +1,586 @@
+---
+description: Language-agnostic PostgreSQL best practices for schema design, indexing, query optimization, and performance tuning
+globs:
+  - "**/*.sql"
+  - "**/migrations/**"
+  - "**/alembic/**"
+alwaysApply: false
+---
+
+# PostgreSQL Standards and Best Practices
+
+Comprehensive PostgreSQL guidelines covering schema design, indexing strategies, query optimization, transaction management, and performance tuning. These standards are language-agnostic and apply to any PostgreSQL implementation.
+
+**For ORM-specific patterns, see:**
+- Python/SQLAlchemy: `.claude/context/database/python-sqlalchemy-standards.mdc`
+- Java/Hibernate: `.claude/context/database/java-hibernate-standards.mdc`
+
+## Table of Contents
+
+1. [Schema Design Principles](#schema-design-principles)
+2. [Indexing Strategies](#indexing-strategies)
+3. [Query Optimization](#query-optimization)
+4. [Transaction Management](#transaction-management)
+5. [Performance Monitoring](#performance-monitoring)
+6. [Maintenance Practices](#maintenance-practices)
+
+---
+
+## Schema Design Principles
+
+### Primary Keys
+
+**Every table MUST have a primary key.**
+
+```sql
+-- GOOD: Serial primary key (auto-incrementing)
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,  -- Use BIGSERIAL for large tables
+    email VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- GOOD: UUID primary key (for distributed systems)
+CREATE TABLE orders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id BIGINT NOT NULL,
+    total NUMERIC(10, 2) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- GOOD: Composite primary key (for junction tables)
+CREATE TABLE user_roles (
+    user_id BIGINT NOT NULL,
+    role_id BIGINT NOT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, role_id)
+);
+```
+
+**Key Considerations:**
+- Use `BIGSERIAL` (BIGINT) for large tables - 2^63 max vs INTEGER's 2^31
+- Use `UUID` for distributed systems, multi-tenant apps, or when hiding sequence
+- Composite keys for many-to-many junction tables
+- Primary keys automatically create indexes
+
+### Foreign Keys
+
+**Foreign keys enforce referential integrity and document relationships.**
+
+```sql
+-- GOOD: Foreign key with proper constraint naming
+CREATE TABLE orders (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT fk_orders_user_id
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);
+
+-- CRITICAL: PostgreSQL does NOT automatically index foreign keys!
+-- Always create index on foreign key columns for JOIN performance
+CREATE INDEX idx_orders_user_id ON orders(user_id);
+```
+
+**Cascade Options:**
+- `ON DELETE CASCADE` - Delete child rows when parent deleted (use carefully!)
+- `ON DELETE SET NULL` - Set foreign key to NULL (requires nullable column)
+- `ON DELETE RESTRICT` - Prevent deletion if child rows exist (default, safest)
+- `ON DELETE NO ACTION` - Same as RESTRICT but check at end of transaction
+
+### Data Types
+
+**Use appropriate data types for better performance and data integrity.**
+
+```sql
+CREATE TABLE products (
+    -- Identifiers
+    id BIGSERIAL PRIMARY KEY,
+    sku VARCHAR(50) NOT NULL,
+
+    -- Text
+    name VARCHAR(200) NOT NULL,          -- Limited length for indexing
+    description TEXT,                    -- Unlimited length
+
+    -- Numbers
+    price NUMERIC(10, 2) NOT NULL,       -- Exact decimal for money
+    weight_kg DECIMAL(8, 3),             -- Alias for NUMERIC
+    stock_count INTEGER NOT NULL,        -- Whole numbers
+    view_count BIGINT DEFAULT 0,         -- Large counters
+
+    -- Booleans
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+    -- Dates and Times
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),  -- Timezone-aware
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    published_date DATE,                            -- Date only
+
+    -- JSON
+    metadata JSONB,                      -- Binary JSON (faster, indexable)
+
+    -- Arrays
+    tags TEXT[]                          -- Array of text
+);
+```
+
+**Type Guidelines:**
+- **Money**: Always use `NUMERIC` or `DECIMAL`, never `FLOAT` (precision issues)
+- **Text**: Use `VARCHAR(n)` for limited-length indexed fields, `TEXT` for unlimited
+- **Timestamps**: Always use `TIMESTAMPTZ` (timezone-aware), not `TIMESTAMP`
+- **Booleans**: Use `BOOLEAN`, not `INTEGER` or `CHAR`
+- **JSON**: Use `JSONB` over `JSON` (faster, indexable, storage efficient)
+- **Integers**: Use `BIGINT` for counters that grow, `INTEGER` for bounded values
+
+### Constraints
+
+**Use database-level constraints to enforce data integrity.**
+
+```sql
+-- CHECK constraints
+CREATE TABLE products (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(200) NOT NULL,
+    price NUMERIC(10, 2) NOT NULL,
+    stock_count INTEGER NOT NULL,
+    discount_percent INTEGER,
+
+    CONSTRAINT chk_price_positive CHECK (price > 0),
+    CONSTRAINT chk_stock_non_negative CHECK (stock_count >= 0),
+    CONSTRAINT chk_discount_range CHECK (discount_percent BETWEEN 0 AND 100)
+);
+
+-- UNIQUE constraints
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    username VARCHAR(50) NOT NULL,
+
+    CONSTRAINT uq_users_email UNIQUE (email),
+    CONSTRAINT uq_users_username UNIQUE (username)
+);
+```
+
+### Normalization
+
+**Start with Third Normal Form (3NF), denormalize only when proven necessary.**
+
+```sql
+-- GOOD: Normalized schema (3NF)
+CREATE TABLE customers (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) NOT NULL UNIQUE
+);
+
+CREATE TABLE orders (
+    id BIGSERIAL PRIMARY KEY,
+    customer_id BIGINT NOT NULL REFERENCES customers(id),
+    order_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    total NUMERIC(10, 2) NOT NULL
+);
+
+CREATE INDEX idx_orders_customer_id ON orders(customer_id);
+```
+
+---
+
+## Indexing Strategies
+
+### Index Types
+
+**PostgreSQL supports multiple index types for different use cases.**
+
+```sql
+-- B-tree index (default) - For equality and range queries
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_orders_date ON orders(order_date);
+
+-- B-tree is good for:
+-- - Equality: WHERE email = 'user@example.com'
+-- - Range: WHERE order_date BETWEEN '2025-01-01' AND '2025-12-31'
+-- - Sorting: ORDER BY created_at
+-- - LIKE with prefix: WHERE name LIKE 'John%'
+
+-- GIN index - For full-text search, JSONB, arrays
+CREATE INDEX idx_articles_search ON articles
+    USING GIN (to_tsvector('english', title || ' ' || content));
+
+CREATE INDEX idx_products_tags ON products USING GIN (tags);
+CREATE INDEX idx_logs_metadata ON logs USING GIN (metadata jsonb_path_ops);
+
+-- GiST index - For geometric data, ranges, full-text search
+CREATE INDEX idx_locations_point ON locations USING GIST (coordinates);
+CREATE INDEX idx_bookings_dates ON bookings
+    USING GIST (tstzrange(start_date, end_date));
+
+-- BRIN index - For large tables with natural ordering
+-- Much smaller than B-tree, good for time-series data
+CREATE INDEX idx_logs_timestamp ON logs USING BRIN (timestamp);
+```
+
+### Composite Indexes
+
+**Index multiple columns together for multi-column queries.**
+
+```sql
+-- GOOD: Composite index for common query pattern
+CREATE INDEX idx_orders_user_status_date
+    ON orders(user_id, status, created_at);
+
+-- This index is used for queries like:
+SELECT * FROM orders
+WHERE user_id = 123 AND status = 'pending'
+ORDER BY created_at DESC;
+
+-- IMPORTANT: Column order matters!
+-- Index is useful for queries filtering on:
+-- - user_id only
+-- - user_id + status
+-- - user_id + status + created_at
+-- But NOT useful for:
+-- - status only
+-- - created_at only
+
+-- Rule: Put high-selectivity (many unique values) columns first
+```
+
+### Partial Indexes
+
+**Index only a subset of rows for smaller, faster indexes.**
+
+```sql
+-- GOOD: Index only active users
+CREATE INDEX idx_users_active_email
+    ON users(email)
+    WHERE status = 'active';
+
+-- GOOD: Index only pending orders
+CREATE INDEX idx_orders_pending_date
+    ON orders(created_at)
+    WHERE status = 'pending';
+
+-- GOOD: Index recent data only
+CREATE INDEX idx_logs_recent
+    ON logs(timestamp, level)
+    WHERE timestamp > NOW() - INTERVAL '30 days';
+```
+
+### Expression Indexes
+
+**Index computed values for queries using expressions.**
+
+```sql
+-- GOOD: Index for case-insensitive search
+CREATE INDEX idx_users_lower_email ON users(LOWER(email));
+
+-- Now this query uses the index:
+SELECT * FROM users WHERE LOWER(email) = 'user@example.com';
+
+-- GOOD: Index on JSON field
+CREATE INDEX idx_users_preferences_theme
+    ON users((preferences->>'theme'));
+```
+
+### Covering Indexes (INCLUDE)
+
+**Include non-key columns for index-only scans.**
+
+```sql
+-- GOOD: Covering index with INCLUDE
+CREATE INDEX idx_orders_user_covering
+    ON orders(user_id)
+    INCLUDE (created_at, status, total);
+
+-- This query can be satisfied entirely from the index (index-only scan):
+SELECT created_at, status, total
+FROM orders
+WHERE user_id = 123;
+```
+
+### Index Maintenance
+
+**Monitor and maintain indexes for optimal performance.**
+
+```sql
+-- Check index usage
+SELECT
+    schemaname,
+    tablename,
+    indexname,
+    idx_scan AS index_scans,
+    idx_tup_read AS tuples_read
+FROM pg_stat_user_indexes
+WHERE schemaname = 'public'
+ORDER BY idx_scan DESC;
+
+-- Find unused indexes
+SELECT
+    schemaname,
+    tablename,
+    indexname,
+    idx_scan
+FROM pg_stat_user_indexes
+WHERE schemaname = 'public'
+  AND idx_scan = 0
+  AND indexname NOT LIKE '%_pkey';
+
+-- Rebuild index (to reduce bloat)
+REINDEX INDEX CONCURRENTLY idx_users_email;
+```
+
+---
+
+## Query Optimization
+
+### Using EXPLAIN ANALYZE
+
+**Always use EXPLAIN ANALYZE to understand query performance.**
+
+```sql
+-- EXPLAIN ANALYZE (actually runs the query)
+EXPLAIN ANALYZE
+SELECT * FROM users WHERE email = 'user@example.com';
+
+-- Detailed output with buffers
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM users WHERE email = 'user@example.com';
+
+-- Look for:
+-- - Sequential Scan vs Index Scan (Index is usually better)
+-- - High cost numbers (indicates expensive operation)
+-- - Nested Loop with large row counts (might need better indexing)
+```
+
+### Query Patterns
+
+**Optimize common query patterns.**
+
+```sql
+-- GOOD: Select only needed columns
+SELECT id, name, email FROM users WHERE id = 123;
+
+-- GOOD: Use EXISTS instead of COUNT for existence checks
+SELECT EXISTS(SELECT 1 FROM orders WHERE user_id = 123);
+
+-- GOOD: Keyset pagination (faster for large offsets)
+SELECT id, name, email FROM users
+WHERE created_at < '2025-01-01 12:00:00'
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+### JOIN Optimization
+
+**Optimize JOIN operations.**
+
+```sql
+-- Ensure foreign key columns are indexed
+CREATE INDEX idx_orders_user_id ON orders(user_id);
+CREATE INDEX idx_order_items_order_id ON order_items(order_id);
+
+-- GOOD: INNER JOIN with indexed columns
+SELECT u.name, o.id, o.total
+FROM users u
+INNER JOIN orders o ON u.id = o.user_id
+WHERE o.status = 'completed';
+```
+
+---
+
+## Transaction Management
+
+### ACID Properties
+
+**PostgreSQL guarantees ACID properties for transactions.**
+
+```sql
+-- Basic transaction
+BEGIN;
+    INSERT INTO orders (user_id, total) VALUES (123, 99.99);
+    UPDATE users SET last_order_date = NOW() WHERE id = 123;
+COMMIT;
+
+-- Transaction with rollback on error
+BEGIN;
+    INSERT INTO orders (user_id, total) VALUES (123, 99.99);
+    INSERT INTO order_items (order_id, product_id, quantity)
+    VALUES (CURRVAL('orders_id_seq'), 456, 2);
+COMMIT;
+
+-- Explicit rollback
+BEGIN;
+    DELETE FROM users WHERE id = 123;
+    -- Oops, wrong user!
+ROLLBACK;
+```
+
+### Isolation Levels
+
+**Choose appropriate isolation level for your use case.**
+
+```sql
+-- Read Committed (default) - Reads committed data only
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+    SELECT * FROM accounts WHERE id = 123;
+    UPDATE accounts SET balance = balance - 100 WHERE id = 123;
+COMMIT;
+
+-- Repeatable Read - Snapshot of database at transaction start
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+    SELECT balance FROM accounts WHERE id = 123;
+    -- Even if other transactions commit changes,
+    -- this transaction sees the same snapshot
+    SELECT balance FROM accounts WHERE id = 123;  -- Same result
+COMMIT;
+
+-- Serializable - Strongest isolation, prevents all anomalies
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+    SELECT SUM(balance) FROM accounts;
+    INSERT INTO accounts (id, balance) VALUES (456, 1000);
+COMMIT;
+-- May fail with serialization error if concurrent transactions conflict
+```
+
+**Isolation Level Guidelines:**
+- **Read Committed** (default): Good for most applications
+- **Repeatable Read**: When you need consistent reads within transaction
+- **Serializable**: Financial transactions, critical data consistency
+- Higher isolation = Lower concurrency, use only when needed
+
+### Locking
+
+**Understand PostgreSQL locking mechanisms.**
+
+```sql
+-- SELECT FOR UPDATE - Lock rows for update
+BEGIN;
+    SELECT * FROM accounts
+    WHERE id = 123
+    FOR UPDATE;  -- Locks this row
+
+    UPDATE accounts SET balance = balance - 100 WHERE id = 123;
+COMMIT;
+
+-- SELECT FOR SHARE - Lock rows for read
+BEGIN;
+    SELECT * FROM accounts
+    WHERE id = 123
+    FOR SHARE;  -- Allows concurrent reads, blocks writes
+COMMIT;
+
+-- SKIP LOCKED - Skip locked rows
+BEGIN;
+    SELECT * FROM queue
+    WHERE processed = false
+    FOR UPDATE SKIP LOCKED
+    LIMIT 10;
+
+    UPDATE queue SET processed = true WHERE id IN (...);
+COMMIT;
+-- Good for job queues with multiple workers
+```
+
+---
+
+## Performance Monitoring
+
+### Connection Pool Monitoring
+
+```sql
+-- Check active connections
+SELECT
+    datname,
+    count(*) as connections,
+    max(backend_start) as oldest_connection
+FROM pg_stat_activity
+GROUP BY datname;
+
+-- Check long-running queries
+SELECT
+    pid,
+    now() - query_start AS duration,
+    state,
+    query
+FROM pg_stat_activity
+WHERE state != 'idle'
+  AND now() - query_start > interval '5 minutes'
+ORDER BY duration DESC;
+```
+
+### Cache Hit Ratio
+
+```sql
+-- Check cache hit ratio (should be > 99%)
+SELECT
+    sum(heap_blks_read) as heap_read,
+    sum(heap_blks_hit) as heap_hit,
+    sum(heap_blks_hit) / (sum(heap_blks_hit) + sum(heap_blks_read)) * 100 AS cache_hit_ratio
+FROM pg_statio_user_tables;
+```
+
+### Table and Index Bloat
+
+```sql
+-- Check table sizes
+SELECT
+    schemaname,
+    tablename,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+FROM pg_tables
+WHERE schemaname = 'public'
+ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
+
+-- Vacuum to reclaim space
+VACUUM ANALYZE users;
+```
+
+---
+
+## Maintenance Practices
+
+### Regular Maintenance
+
+```sql
+-- Analyze tables to update statistics
+ANALYZE users;
+ANALYZE orders;
+
+-- Vacuum to reclaim space
+VACUUM users;
+VACUUM orders;
+
+-- Vacuum analyze (both operations)
+VACUUM ANALYZE users;
+
+-- Reindex to rebuild indexes
+REINDEX TABLE CONCURRENTLY users;
+```
+
+### Automated Maintenance
+
+```sql
+-- Check autovacuum settings
+SHOW autovacuum;
+
+-- Adjust autovacuum for busy tables
+ALTER TABLE orders
+SET (autovacuum_vacuum_scale_factor = 0.05);  -- Vacuum more frequently
+
+ALTER TABLE logs
+SET (autovacuum_vacuum_scale_factor = 0.02);  -- Very busy table
+```
+
+---
+
+## Supporting Components
+
+This context file supports:
+- **Python ORM**: `.claude/context/database/python-sqlalchemy-standards.mdc`
+- **Java ORM**: `.claude/context/database/java-hibernate-standards.mdc`
+- **Database Agents**: `.claude/agents/database/`
+- **Validation Commands**: `.claude/commands/database/validate-*.md`

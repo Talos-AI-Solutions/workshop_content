@@ -1,0 +1,1 @@
+Do an analysis of the mockup screenshots and create a design system definition. Output the details in markdown

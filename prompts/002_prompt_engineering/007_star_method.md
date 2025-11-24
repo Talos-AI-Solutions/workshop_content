@@ -1,0 +1,1 @@
+You're a senior software architect designing a new caching system for our product. I need a comprehensive and defensible ADR that weights up the pros and cons of various caching scenarios. You must show at least 3 options and identify the chosen option and provide reasoning regarding it's viability. 
