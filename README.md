@@ -1,4 +1,4 @@
-# EIDA Workshop - Claude Code Sample Project
+# Workshop - Claude Code Sample Project
 
 This repository contains sample agents, commands, and design artifacts for learning Claude Code over the first day of the workshop.
 
