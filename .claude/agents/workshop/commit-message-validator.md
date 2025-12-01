@@ -4,6 +4,7 @@ description: Expert in validating git commit messages against Conventional Commi
 model: sonnet
 color: blue
 tools: Bash, Read, Grep
+permissionMode: acceptEdits
 ---
 
 # Commit Message Validator

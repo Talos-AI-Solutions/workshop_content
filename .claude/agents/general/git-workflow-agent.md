@@ -4,6 +4,7 @@ description: Expert in trunk-based development with Conventional Commits v1.0.0 
 model: sonnet
 color: blue
 tools: Bash, Grep, Glob, Read, mcp__github__*, mcp__context7__*
+permissionMode: acceptEdits
 ---
 
 # Git Workflow Agent
