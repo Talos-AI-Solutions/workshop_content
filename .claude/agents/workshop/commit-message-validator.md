@@ -39,13 +39,7 @@ Validate git commit messages ensuring strict compliance with Conventional Commit
 5. **Provide guidance** - Reference context for correction examples
 
 ## Validation Requirements
-
-Format compliance - type(scope): subject, optional body, optional footer
-Type validity - feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert only
-Subject rules - lowercase, imperative mood, no period, 50 char max
-Body rules - blank line after subject, 72 char wrap, imperative mood
-Breaking changes - ! indicator or BREAKING CHANGE: footer required
-Footer format - token: value or token #value for issue references
+Always call /validate-commit-message when complete to validate all work is done to our standards
 
 ## Standards Validation
 

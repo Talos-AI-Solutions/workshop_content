@@ -142,3 +142,6 @@ Provide the complete updated CLAUDE.md content, organized as:
 
 ## Important Notes
 [Key information for developers]
+
+## 6. No Change
+Do not assume that you always have to change the CLAUDE.md file. If there are no material changes to the solution exit and explain to the user that the current file describes the solution perfectly. 
